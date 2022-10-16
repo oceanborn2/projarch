@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="utf-8" ?>
+
+<project name="TheProjectArchitect" default="build" basedir="..">
+
+<!-- set up the environment -->
+<target name="setenv">
+  <echo message="Setting up environment variables"/>
+  <property environment="env"/>
+  <property name="perl"   value="/usr/bin/perl"/>
+  <property name="cdgdir" value="src/codegen"/>
+  <property name="build.compiler" value="jikes"/>
+  <property name="j2ee-libs" value="/opt/sun-j2ee-1.3/lib/j2ee.jar"/>
+  <property name="tomcat-root" value="/opt/jakarta/tomcat"/>
+  <property name="junit-libs" value="/usr/share/junit/lib/junit.jar"/>
+  <property name="postgresql-libs" value="imports/pgjdbc2.jar"/>
+  <property name="fop-home" value="/opt/fop/fop-0.20.3"/>
+
+  <property name="genver" value=""/> <!-- temporary : in order to select generate.pl script version -->
+  <property name="build" value="build"/>             <!-- build directory -->
+  <property name="buildtmp" value="${build}/tmp"/>   <!-- build directory for temporary files -->
+  <property name="doc" value="doc"/> 		     <!-- documentation root directory -->
+  <property name="gendoc" value="${doc}/generated"/> <!-- generated documentation -->
+  <property name="xmldoc" value="${doc}/xmldoc"/>    <!-- generated documentation -->
+  <property name="src" value="src"/>		     <!-- source code -->
+  <property name="bin" value="bin"/>	     <!-- compiled code -->
+
+  <taskdef  name="fop" classname="org.apache.fop.tools.anttasks.Fop"/>
+  <path id="classpath.global">
+       <pathelement location="${j2ee-libs}"/>
+       <pathelement location="${junit-libs}"/>
+       <pathelement location="${fop-home}/lib"/>
+       <pathelement location="${fop-home}/build"/>
+       <pathelement location="${postgresql-libs}"/>
+  </path>
+</target>
+
+
+<!-- perform a backup -->
+<target name="backup">
+  <tstamp/>
+  <jar jarfile="../tpa-${DSTAMP}.jar" includes="**/*"/>
+</target>
+
+<!-- initializes directory structure -->
+<target name="initenv" depends="setenv">
+  <mkdir dir="${bin}"/>
+  <mkdir dir="${build}/dist"/>
+  <mkdir dir="${build}/dist/projectweb"/>
+  <mkdir dir="${build}/dist/war"/>
+  <mkdir dir="${build}/dist/ejbs"/>
+  <mkdir dir="${buildtmp}"/>
+  <mkdir dir="${src}/generated"/>
+  <mkdir dir="${doc}/api"/>
+  <mkdir dir="${doc}/generated"/>
+</target>
+
+<!-- clean up generated sources -->
+<target name="cleangen">
+  <delete dir="${src}/generated"/>
+</target>
+
+<!-- clean everything that has been generated -->
+<target name="clean" depends="setenv,cleangen">
+  <delete dir="${bin}"/>
+  <delete dir="${build}/dist"/>
+  <delete dir="${build}/dist/projectweb"/>
+  <delete dir="${build}/dist/war"/>
+  <delete dir="${build}/dist/ejbs"/>
+  <delete dir="${buildtmp}"/>
+  <delete dir="${doc}/api"/>
+  <delete dir="${doc}/generated"/>
+</target>
+
+<!-- invokes code generation -->
+<target name="codegen" depends="initenv,setenv">
+  <echo message="Generating code"/>
+  <exec executable="${perl}">
+   <arg line="-I${cdgdir} -I../${cdgdir}/lang -I../${cdgdir}/utils"/>
+   <arg line="${cdgdir}/generate${genver}.pl"/>
+  </exec>
+</target>
+
+<!-- invokes the build procedure (generate and compile everything) -->
+<target name="build" depends="codegen">
+  <echo message="Compiling source files"/>
+  <javac destdir="${bin}">
+    <src path="${src}/notgenerated/ops"/>
+    <src path="${src}/generated"/>
+    <classpath refid="classpath.global"/>
+  </javac>
+</target>
+
+<!-- Produce fop documentation -->
+<target name="fop-style" depends="setenv,initenv">
+   <delete>
+    <fileset dir="${buildtmp}" includes="*.fo"/>
+    <fileset dir="${buildtmp}" includes="*.pdf"/>
+   </delete>
+
+  <style style="requirements/requirements.xsl" in="requirements/root.xml"   out="${buildtmp}/root.fo"/>
+  <style style="${xmldoc}/stylesheets/Changelog.xsl" in="${xmldoc}/Changelog.xml" out="${buildtmp}/Changelog.fo"/>
+  <style style="${xmldoc}/stylesheets/Todolist.xsl" in="${xmldoc}/Todolist.xml" out="${buildtmp}/Todolist.fo"/>
+  <style style="${xmldoc}/stylesheets/faq.xsl" in="${xmldoc}/faqs.xml" out="${buildtmp}/faqs.fo"/>
+
+  </target>
+
+<target name="fop-pdf" depends="fop-style">
+  <delete>
+    <fileset dir="${buildtmp}" includes="*.pdf"/>
+  </delete>
+  <fop format="application/pdf" outdir="${gendoc}" messagelevel="debug">
+      <fileset dir="${buildtmp}">
+        <include name="**/*.fo"/>
+      </fileset>
+   </fop>
+   <exec executable="acroread">
+      <arg line="${gendoc}/Todolist.pdf"/>
+   </exec>
+</target>
+
+<target name="fop-ps" depends="fop-style">
+  <delete>
+    <fileset dir="${buildtmp}" includes="*.ps"/>
+  </delete>
+  <fop format="application/postscript" outdir="${buildtmp}" messagelevel="debug">
+      <fileset dir="${buildtmp}">
+        <include name="**/*.fo"/>
+      </fileset>
+   </fop>
+   <exec executable="gs">
+      <arg line="${buildtmp}/Changelog.ps"/>
+   </exec>
+</target>
+
+<target name="fop" depends="fop-pdf,fop-ps"/>
+
+<!-- creates the javadoc -->
+<target name="javadoc" depends="initenv">
+ <javadoc packagenames="ops.*"
+           defaultexcludes="yes"
+           destdir="doc/api"
+           author="true"
+           version="true"
+           use="true"
+           windowtitle="The Project Architect APIs">
+    <sourcepath>
+       <pathelement path="src/notgenerated"/>
+       <pathelement path="src/generated"/>
+    </sourcepath>
+
+    <classpath refid="classpath.global">
+<!--	<pathelement location="${bin}"/> -->
+    </classpath>
+
+    <doctitle><![CDATA[<h1>The Project Architect APIs</h1>]]></doctitle>
+    <bottom><![CDATA[<i>Copyright &#169; 2000 Pascal Munerot. All Rights Reserved.</i>]]></bottom>
+  </javadoc>
+ </target>
+
+ <!-- creates the database -->
+ <target name="staging" depends="codegen">
+
+<!--
+   <echo message="pwd:${env.PWD}"/>
+   <exec dir="/bin" executable="bash">
+     <arg line="src/sql/mkcreate.sh"/>
+   </exec>
+-->
+   <sql
+    driver="org.postgresql.Driver"
+    url="jdbc:postgresql:tpa"
+    userid="pascal"
+    password="pascal"
+    src="src/sql/create_db.sql"
+    print="yes"
+    output="outputfile.txt">
+    <classpath refid="classpath.global"/>
+   </sql>
+ </target>
+
+ <target name="pack" depends="initenv">
+   <delete file="build/dist/war/tpa.war"/>
+   <war warfile="build/dist/war/tpa.war" webxml="src/web/WEB-INF/web.xml" basedir="src/web"/>
+ </target>
+
+ <target name="deploy" depends="pack">
+   <delete dir="${tomcat-root}/webapps/tpa"/>
+   <copy file="build/dist/war/tpa.war" todir="${tomcat-root}/webapps"/>
+   <exec executable="${tomcat-root}/bin/shutdown.sh"/>
+   <exec executable="${tomcat-root}/bin/startup.sh"/>
+ </target>
+
+ <!-- This target is used to bundle the whole project web site along with the generated documentation -->
+ <target name="project-website" depends="fop-pdf,fop-ps">
+
+ </target>
+
+</project>
+
